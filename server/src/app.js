@@ -2,6 +2,8 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
 const authRoutes = require('./routes/authRoutes');
+const linkRoutes = require('./routes/linkRoutes');
+const { redirectToOriginal } = require('./controllers/linkController');
 
 const app = express();
 
@@ -19,5 +21,8 @@ app.get('/', (req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/links', linkRoutes);
+
+app.get('/:shortCode', redirectToOriginal);
 
 module.exports = app;
