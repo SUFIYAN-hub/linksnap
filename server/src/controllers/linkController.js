@@ -1,5 +1,7 @@
 const { nanoid } = require('nanoid');
 const Link = require('../models/Link');
+const Click = require('../models/Click');
+const parseClick = require('../utils/parseClick');
 
 // Basic URL validation: must parse and be http/https
 const isValidUrl = (value) => {
@@ -96,13 +98,45 @@ const redirectToOriginal = async (req, res) => {
       return res.status(410).json({ message: 'This link is no longer active' });
     }
 
-    // $inc is atomic: safe even if many people click at the same moment
-    await Link.updateOne({ _id: link._id }, { $inc: { clickCount: 1 } });
+    // Log the detailed click and bump the counter. We don't await these,
+    // so the visitor is redirected immediately; analytics failures never block a redirect.
+    Click.create({ link: link._id, ...parseClick(req) }).catch((e) =>
+      console.error('Click log failed:', e.message)
+    );
+    Link.updateOne({ _id: link._id }, { $inc: { clickCount: 1 } }).catch((e) =>
+      console.error('Count update failed:', e.message)
+    );
 
     return res.redirect(302, link.originalUrl);
   } catch (err) {
     res.status(500).json({ message: 'Redirect failed', error: err.message });
   }
 };
+// GET /api/links  (protected)
+const getMyLinks = async (req, res) => {
+  try {
+    const links = await Link.find({ user: req.user._id })
+      .sort({ createdAt: -1 })
+      .select('originalUrl shortCode isCustomAlias clickCount isActive expiresAt maxClicks createdAt');
 
-module.exports = { createLink, redirectToOriginal };
+    const result = links.map((link) => ({
+      id: link._id,
+      originalUrl: link.originalUrl,
+      shortCode: link.shortCode,
+      shortUrl: `${process.env.BASE_URL}/${link.shortCode}`,
+      isCustomAlias: link.isCustomAlias,
+      clickCount: link.clickCount,
+      isActive: link.isActive,
+      expiresAt: link.expiresAt,
+      maxClicks: link.maxClicks,
+      createdAt: link.createdAt,
+    }));
+
+    res.status(200).json({ links: result });
+  } catch (err) {
+    res.status(500).json({ message: 'Could not fetch links', error: err.message });
+  }
+};
+
+
+module.exports = { createLink, redirectToOriginal, getMyLinks };
