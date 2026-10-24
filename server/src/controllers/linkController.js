@@ -2,6 +2,7 @@ const { nanoid } = require('nanoid');
 const Link = require('../models/Link');
 const Click = require('../models/Click');
 const parseClick = require('../utils/parseClick');
+const mongoose = require('mongoose');
 
 // Basic URL validation: must parse and be http/https
 const isValidUrl = (value) => {
@@ -138,5 +139,83 @@ const getMyLinks = async (req, res) => {
   }
 };
 
+// GET /api/links/:id/analytics?days=7  (protected)
+const getLinkAnalytics = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ message: 'Invalid link id' });
+    }
 
-module.exports = { createLink, redirectToOriginal, getMyLinks };
+    // Ownership check: the link must belong to the logged-in user
+    const link = await Link.findOne({ _id: id, user: req.user._id });
+    if (!link) {
+      return res.status(404).json({ message: 'Link not found' });
+    }
+
+    // Time window: last N days (1-90), counting today, in UTC
+    const days = Math.min(Math.max(parseInt(req.query.days) || 7, 1), 90);
+    const start = new Date();
+    start.setUTCHours(0, 0, 0, 0);
+    start.setUTCDate(start.getUTCDate() - (days - 1));
+
+    // Reusable pipeline: group by a field, count, take the top 10
+    const topBy = (field) => [
+      { $group: { _id: `$${field}`, count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 10 },
+    ];
+
+    // $facet runs several aggregations over the same matched clicks in ONE query
+    const [data] = await Click.aggregate([
+      { $match: { link: link._id, createdAt: { $gte: start } } },
+      {
+        $facet: {
+          overTime: [
+            {
+              $group: {
+                _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+                clicks: { $sum: 1 },
+              },
+            },
+          ],
+          devices: topBy('device'),
+          browsers: topBy('browser'),
+          referrers: topBy('referrer'),
+          countries: topBy('country'),
+        },
+      },
+    ]);
+
+    // Days with zero clicks have no documents, so fill them in for a continuous chart
+    const byDay = Object.fromEntries(data.overTime.map((d) => [d._id, d.clicks]));
+    const clicksOverTime = [];
+    for (let i = 0; i < days; i++) {
+      const d = new Date(start);
+      d.setUTCDate(start.getUTCDate() + i);
+      const key = d.toISOString().slice(0, 10);
+      clicksOverTime.push({ date: key, clicks: byDay[key] || 0 });
+    }
+
+    const format = (rows) => rows.map((r) => ({ name: r._id, count: r.count }));
+
+    res.status(200).json({
+      link: {
+        id: link._id,
+        shortCode: link.shortCode,
+        originalUrl: link.originalUrl,
+        totalClicks: link.clickCount,
+      },
+      days,
+      clicksOverTime,
+      devices: format(data.devices),
+      browsers: format(data.browsers),
+      referrers: format(data.referrers),
+      countries: format(data.countries),
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Could not fetch analytics', error: err.message });
+  }
+};
+
+module.exports = { createLink, redirectToOriginal, getMyLinks, getLinkAnalytics };
