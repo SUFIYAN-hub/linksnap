@@ -3,6 +3,8 @@ const Link = require('../models/Link');
 const Click = require('../models/Click');
 const parseClick = require('../utils/parseClick');
 const mongoose = require('mongoose');
+const redis = require('../config/redis');
+const CACHE_TTL_SECONDS = 60 * 60; // 1 hour
 
 // Basic URL validation: must parse and be http/https
 const isValidUrl = (value) => {
@@ -85,29 +87,64 @@ const createLink = async (req, res) => {
 };
 
 // GET /:shortCode  (public, no login needed)
+// GET /:shortCode  (public, no login needed)
 const redirectToOriginal = async (req, res) => {
   try {
     const { shortCode } = req.params;
+    const cacheKey = `link:${shortCode}`;
 
-    const link = await Link.findOne({ shortCode });
+    let link = null;
+    let cacheStatus = 'MISS';
 
+    // 1. Try the cache first
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        link = JSON.parse(cached);
+        cacheStatus = 'HIT';
+      }
+    } catch (e) {
+      console.error('Redis get failed:', e.message);
+      cacheStatus = 'BYPASS'; // Redis unavailable, go straight to MongoDB
+    }
+
+    // 2. Cache miss: read from MongoDB, then fill the cache
     if (!link) {
-      return res.status(404).json({ message: 'Link not found' });
+      const doc = await Link.findOne({ shortCode });
+
+      if (!doc) {
+        return res.status(404).json({ message: 'Link not found' });
+      }
+
+      link = {
+        id: doc._id.toString(),
+        originalUrl: doc.originalUrl,
+        isActive: doc.isActive,
+        expiresAt: doc.expiresAt,
+        maxClicks: doc.maxClicks,
+      };
+
+      // Only cache active links, so a disabled link is always re-checked in the DB
+      if (doc.isActive && cacheStatus !== 'BYPASS') {
+        redis
+          .set(cacheKey, JSON.stringify(link), 'EX', CACHE_TTL_SECONDS)
+          .catch((e) => console.error('Redis set failed:', e.message));
+      }
     }
 
     if (!link.isActive) {
       return res.status(410).json({ message: 'This link is no longer active' });
     }
 
-    // Log the detailed click and bump the counter. We don't await these,
-    // so the visitor is redirected immediately; analytics failures never block a redirect.
-    Click.create({ link: link._id, ...parseClick(req) }).catch((e) =>
+    // Analytics: fire and forget, never blocks the redirect
+    Click.create({ link: link.id, ...parseClick(req) }).catch((e) =>
       console.error('Click log failed:', e.message)
     );
-    Link.updateOne({ _id: link._id }, { $inc: { clickCount: 1 } }).catch((e) =>
+    Link.updateOne({ _id: link.id }, { $inc: { clickCount: 1 } }).catch((e) =>
       console.error('Count update failed:', e.message)
     );
 
+    res.set('X-Cache', cacheStatus); // handy for testing and for demos
     return res.redirect(302, link.originalUrl);
   } catch (err) {
     res.status(500).json({ message: 'Redirect failed', error: err.message });
