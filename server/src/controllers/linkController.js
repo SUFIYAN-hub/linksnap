@@ -5,6 +5,7 @@ const parseClick = require("../utils/parseClick");
 const mongoose = require("mongoose");
 const redis = require("../config/redis");
 const CACHE_TTL_SECONDS = 60 * 60; // 1 hour
+const QRCode = require("qrcode");
 
 // Basic URL validation: must parse and be http/https
 const isValidUrl = (value) => {
@@ -25,25 +26,35 @@ const createLink = async (req, res) => {
     const { originalUrl, customAlias, expiresInDays, maxClicks } = req.body;
 
     if (!originalUrl || !isValidUrl(originalUrl)) {
-      return res.status(400).json({ message: 'Please provide a valid http/https URL' });
+      return res
+        .status(400)
+        .json({ message: "Please provide a valid http/https URL" });
     }
 
     // Optional expiry by date
     let expiresAt = null;
-    if (expiresInDays !== undefined && expiresInDays !== null && expiresInDays !== '') {
+    if (
+      expiresInDays !== undefined &&
+      expiresInDays !== null &&
+      expiresInDays !== ""
+    ) {
       const d = Number(expiresInDays);
       if (!Number.isFinite(d) || d <= 0 || d > 365) {
-        return res.status(400).json({ message: 'expiresInDays must be between 0 and 365' });
+        return res
+          .status(400)
+          .json({ message: "expiresInDays must be between 0 and 365" });
       }
       expiresAt = new Date(Date.now() + d * 24 * 60 * 60 * 1000);
     }
 
     // Optional expiry by clicks
     let clickLimit = null;
-    if (maxClicks !== undefined && maxClicks !== null && maxClicks !== '') {
+    if (maxClicks !== undefined && maxClicks !== null && maxClicks !== "") {
       const m = Number(maxClicks);
       if (!Number.isInteger(m) || m < 1 || m > 1000000) {
-        return res.status(400).json({ message: 'maxClicks must be a whole number of at least 1' });
+        return res
+          .status(400)
+          .json({ message: "maxClicks must be a whole number of at least 1" });
       }
       clickLimit = m;
     }
@@ -54,12 +65,12 @@ const createLink = async (req, res) => {
     if (customAlias) {
       if (!aliasRegex.test(customAlias)) {
         return res.status(400).json({
-          message: 'Alias must be 3-30 characters: letters, numbers, - or _',
+          message: "Alias must be 3-30 characters: letters, numbers, - or _",
         });
       }
       const taken = await Link.findOne({ shortCode: customAlias });
       if (taken) {
-        return res.status(409).json({ message: 'Alias already taken' });
+        return res.status(409).json({ message: "Alias already taken" });
       }
       shortCode = customAlias;
       isCustomAlias = true;
@@ -73,7 +84,9 @@ const createLink = async (req, res) => {
         }
       }
       if (!shortCode) {
-        return res.status(500).json({ message: 'Could not generate a unique code, try again' });
+        return res
+          .status(500)
+          .json({ message: "Could not generate a unique code, try again" });
       }
     }
 
@@ -82,7 +95,7 @@ const createLink = async (req, res) => {
       originalUrl,
       shortCode,
       isCustomAlias,
-      expiresAt,            // plain variables here, not link.xxx
+      expiresAt, // plain variables here, not link.xxx
       maxClicks: clickLimit,
     });
 
@@ -94,16 +107,18 @@ const createLink = async (req, res) => {
         shortUrl: `${process.env.BASE_URL}/${link.shortCode}`,
         clickCount: link.clickCount,
         isActive: link.isActive,
-        expiresAt: link.expiresAt,   // link.xxx is fine here, after creation
+        expiresAt: link.expiresAt, // link.xxx is fine here, after creation
         maxClicks: link.maxClicks,
         createdAt: link.createdAt,
       },
     });
   } catch (err) {
     if (err.code === 11000) {
-      return res.status(409).json({ message: 'Alias already taken' });
+      return res.status(409).json({ message: "Alias already taken" });
     }
-    res.status(500).json({ message: 'Could not create link', error: err.message });
+    res
+      .status(500)
+      .json({ message: "Could not create link", error: err.message });
   }
 };
 
@@ -116,25 +131,25 @@ const redirectToOriginal = async (req, res) => {
     const cacheKey = `link:${shortCode}`;
 
     let link = null;
-    let cacheStatus = 'MISS';
+    let cacheStatus = "MISS";
 
     // 1. Try the cache first
     try {
       const cached = await redis.get(cacheKey);
       if (cached) {
         link = JSON.parse(cached);
-        cacheStatus = 'HIT';
+        cacheStatus = "HIT";
       }
     } catch (e) {
-      console.error('Redis get failed:', e.message);
-      cacheStatus = 'BYPASS';
+      console.error("Redis get failed:", e.message);
+      cacheStatus = "BYPASS";
     }
 
     // 2. Cache miss: read from MongoDB, then fill the cache
     if (!link) {
       const doc = await Link.findOne({ shortCode });
       if (!doc) {
-        return res.status(404).json({ message: 'Link not found' });
+        return res.status(404).json({ message: "Link not found" });
       }
 
       link = {
@@ -148,33 +163,38 @@ const redirectToOriginal = async (req, res) => {
       // The cache entry must never outlive the link's expiry date
       let ttl = CACHE_TTL_SECONDS;
       if (doc.expiresAt) {
-        ttl = Math.min(ttl, Math.floor((doc.expiresAt.getTime() - Date.now()) / 1000));
+        ttl = Math.min(
+          ttl,
+          Math.floor((doc.expiresAt.getTime() - Date.now()) / 1000),
+        );
       }
 
-      if (doc.isActive && ttl > 0 && cacheStatus !== 'BYPASS') {
+      if (doc.isActive && ttl > 0 && cacheStatus !== "BYPASS") {
         redis
-          .set(cacheKey, JSON.stringify(link), 'EX', ttl)
-          .catch((e) => console.error('Redis set failed:', e.message));
+          .set(cacheKey, JSON.stringify(link), "EX", ttl)
+          .catch((e) => console.error("Redis set failed:", e.message));
       }
     }
 
     // Helper: disable the link in MongoDB and drop it from the cache
     const deactivate = () => {
       Link.updateOne({ _id: link.id }, { isActive: false }).catch((e) =>
-        console.error('Deactivate failed:', e.message)
+        console.error("Deactivate failed:", e.message),
       );
-      redis.del(cacheKey).catch((e) => console.error('Redis del failed:', e.message));
+      redis
+        .del(cacheKey)
+        .catch((e) => console.error("Redis del failed:", e.message));
     };
 
     // 3. Disabled
     if (!link.isActive) {
-      return res.status(410).json({ message: 'This link is no longer active' });
+      return res.status(410).json({ message: "This link is no longer active" });
     }
 
     // 4. Expired by date
     if (link.expiresAt && new Date(link.expiresAt) <= new Date()) {
       deactivate();
-      return res.status(410).json({ message: 'This link has expired' });
+      return res.status(410).json({ message: "This link has expired" });
     }
 
     // 5. Count the click. With a click limit, the check and the increment must be ONE atomic step.
@@ -182,30 +202,32 @@ const redirectToOriginal = async (req, res) => {
       const updated = await Link.findOneAndUpdate(
         { _id: link.id, isActive: true, clickCount: { $lt: link.maxClicks } },
         { $inc: { clickCount: 1 } },
-        { new: true }
+        { new: true },
       );
 
       if (!updated) {
         deactivate();
-        return res.status(410).json({ message: 'This link has reached its click limit' });
+        return res
+          .status(410)
+          .json({ message: "This link has reached its click limit" });
       }
 
       // That was the last allowed click: it still redirects, but the link is now closed
       if (updated.clickCount >= link.maxClicks) deactivate();
     } else {
       Link.updateOne({ _id: link.id }, { $inc: { clickCount: 1 } }).catch((e) =>
-        console.error('Count update failed:', e.message)
+        console.error("Count update failed:", e.message),
       );
     }
 
     Click.create({ link: link.id, ...parseClick(req) }).catch((e) =>
-      console.error('Click log failed:', e.message)
+      console.error("Click log failed:", e.message),
     );
 
-    res.set('X-Cache', cacheStatus);
+    res.set("X-Cache", cacheStatus);
     return res.redirect(302, link.originalUrl);
   } catch (err) {
-    res.status(500).json({ message: 'Redirect failed', error: err.message });
+    res.status(500).json({ message: "Redirect failed", error: err.message });
   }
 };
 // GET /api/links  (protected)
@@ -323,9 +345,34 @@ const getLinkAnalytics = async (req, res) => {
   }
 };
 
+// GET /api/links/:id/qr  (protected)
+const getLinkQr = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ message: "Invalid link id" });
+    }
+
+    // Ownership check, same pattern as analytics
+    const link = await Link.findOne({ _id: id, user: req.user._id });
+    if (!link) {
+      return res.status(404).json({ message: "Link not found" });
+    }
+
+    const shortUrl = `${process.env.BASE_URL}/${link.shortCode}`;
+    const qr = await QRCode.toDataURL(shortUrl, { width: 300, margin: 2 });
+
+    res.status(200).json({ qr, shortUrl });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: "Could not generate QR code", error: err.message });
+  }
+};
 module.exports = {
   createLink,
   redirectToOriginal,
   getMyLinks,
   getLinkAnalytics,
+  getLinkQr,
 };
