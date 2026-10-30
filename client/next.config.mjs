@@ -1,14 +1,19 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  /* config options here */
-  turbopack: {
-    rules: {
-      "*.css": {
-        loaders: ["@tailwindcss/turbopack"],
-        as: "*.css",
+  async rewrites() {
+  return {
+    fallback: [
+      {
+        source: '/api/:path*',
+        destination: `${process.env.BACKEND_URL}/api/:path*`,
       },
-    },
-  },
+      {
+        source: '/:shortCode',
+        destination: `${process.env.BACKEND_URL}/:shortCode`,
+      },
+    ],
+  };
+},
 };
 
 export default nextConfig;
