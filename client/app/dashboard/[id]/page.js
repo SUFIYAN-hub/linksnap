@@ -88,7 +88,7 @@ export default function AnalyticsPage() {
 
   return (
     <main className="min-h-screen bg-gray-50">
-      <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
+      <div className="max-w-4xl mx-auto px-4 py-6 sm:py-8 space-y-6">
         <Link href="/dashboard" className="text-sm text-blue-600 underline">
           &larr; Back to dashboard
         </Link>

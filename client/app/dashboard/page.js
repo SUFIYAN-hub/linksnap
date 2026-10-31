@@ -91,7 +91,7 @@ export default function DashboardPage() {
         <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
           <h1 className="text-xl font-bold text-gray-900">LinkSnap</h1>
           <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-600">{user.name}</span>
+            <span className="hidden sm:inline text-sm text-gray-600">{user.name}</span>
             <button
               onClick={logout}
               className="text-sm bg-gray-800 text-white px-3 py-1.5 rounded-lg"
@@ -118,7 +118,7 @@ export default function DashboardPage() {
             required
             className="w-full border rounded-lg px-3 py-2 text-gray-900"
           />
-          <div className="flex gap-3">
+          <div className="flex flex-col sm:flex-row gap-3">
             <input
               type="text"
               placeholder="Custom alias (optional)"
@@ -129,7 +129,7 @@ export default function DashboardPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="bg-blue-600 text-white rounded-lg px-5 py-2 font-medium disabled:opacity-60"
+              className="bg-blue-600 text-white rounded-lg px-5 py-2 font-medium disabled:opacity-60 w-full sm:w-auto"
             >
               {submitting ? "Creating..." : "Shorten"}
             </button>
@@ -169,7 +169,7 @@ export default function DashboardPage() {
 
          {links.map((link) => (
   <div key={link.id} className="bg-white p-4 rounded-xl shadow">
-    <div className="flex items-center justify-between gap-4">
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
       <div className="min-w-0">
         <p className="font-medium text-blue-600 truncate">
           {link.shortUrl}
@@ -189,7 +189,7 @@ export default function DashboardPage() {
           {link.maxClicks && `Limit ${link.maxClicks} clicks`}
         </p>
       </div>
-      <div className="flex items-center gap-3 shrink-0">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3 sm:shrink-0">
         <span className="text-sm text-gray-700">
           <strong>{link.clickCount}</strong> clicks
         </span>
@@ -215,7 +215,7 @@ export default function DashboardPage() {
     </div>
 
     {qrData?.id === link.id && (
-      <div className="mt-4 flex items-center gap-4">
+      <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
         <img src={qrData.qr} alt={`QR code for ${link.shortUrl}`} className="w-40 h-40 border rounded-lg" />
         <a
           href={qrData.qr}
